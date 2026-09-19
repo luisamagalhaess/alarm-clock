@@ -29,6 +29,7 @@ static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
+static bool maior_prioridade (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
@@ -90,11 +91,23 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
-  int64_t start = timer_ticks ();
+  enum intr_level old_level;
+  struct thread *current;
 
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+
+  if (ticks <= 0)
+    return;
+
+  old_level = intr_disable ();
+
+  current = thread_current ();
+  current->wakeup_tick = timer_ticks () + ticks;
+
+  list_push_back (&sleeping_threads, &current->elem);
+  thread_block ();
+
+  intr_set_level (old_level);
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -167,11 +180,55 @@ timer_print_stats (void)
   printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
 
+
+static bool
+maior_prioridade (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  const struct thread *t1 = list_entry (a, struct thread, elem);
+  const struct thread *t2 = list_entry (b, struct thread, elem);
+
+  return t1->priority < t2->priority;
+}
+
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
+  struct list_elem *e;
+  struct list acordadas;
+
   ticks++;
+  list_init (&acordadas);
+
+  e = list_begin (&sleeping_threads);
+
+  while (e != list_end (&sleeping_threads))
+    {
+      struct thread *t = list_entry (e, struct thread, elem);
+
+      if (t->wakeup_tick <= ticks)
+        {
+          e = list_remove (e);
+          list_push_back (&acordadas, &t->elem);
+        }
+      else
+        {
+          e = list_next (e);
+        }
+    }
+
+  while (!list_empty (&acordadas))
+    {
+      struct list_elem *maior;
+      struct thread *t;
+
+      maior = list_max (&acordadas, maior_prioridade, NULL);
+      list_remove (maior);
+
+      t = list_entry (maior, struct thread, elem);
+      thread_unblock (t);
+    }
+
   thread_tick ();
 }
 
