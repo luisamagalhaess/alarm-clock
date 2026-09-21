@@ -1,0 +1,880 @@
+Script started on 2026-09-19 19:27:17-03:00 [TERM="xterm-256color" TTY="/dev/pts/2" COLUMNS="166" LINES="31"]
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ awk -F, 'NR>1 {s+=$2; n++} END {printf "Media todos os nucleos: %.4f GHz\n", s/n}' turbo-carregado.csv[13Pcperf sozinho: %.4f GHz\n", s/n}' turbo.csv[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C&& $1>=55 {s+=$2; n++} END {printf "Media ultimos 5s carregado: %.4f GHz\n", s/n}' turbo-carregado.csv[A]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C<=5 {s+=$2; n++} END {printf "Media primeiros 5s carregado: %.4f GHz\n", s/n}' turbo-carregado.csv[A]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ tail turbo-carregado.csv[K
+[K[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Chead[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Ckill $(jobs -p) 2>/dev/null./cperf ladder 60 > turbo-carregado.csvfor k in $(seq 1 $(( $(nproc) - 1 ))); do yes > /dev/null & done[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cawk -F, 'NR>1 && $1>=85 {s+=$2; n++} END {printf "Media ultimos 5s: %.4f GHz\n", s/n}' turbo.csv[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[1@<=5 {s+=$2; n++} END {printf "Media primeir[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Ctail turbo.csv[Khead[C[C[C[C[C[C[C[C[C[C[K[K[K[K[K[K[K[K[K[K[K[K[K[Kcd ./cperf ladder 90 > turbo.csvkill %1[K[K[K[K[K[K[K[K[7mpwd[27m
+[7mmake[27m
+[7msed -n '1,105p' ../devices/timer.c[27m[A[A]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ pwd
+make
+sed -n '1,105p' ../devices/timer.c
+[?2004l/home/luisa/InfrSW/pintos/src/threads
+cd build && make all
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+#include "devices/timer.h"
+#include <debug.h>
+#include <inttypes.h>
+#include <round.h>
+#include <stdio.h>
+#include "devices/pit.h"
+#include "threads/interrupt.h"
+#include "threads/synch.h"
+#include "threads/thread.h"
+  
+/* See [8254] for hardware details of the 8254 timer chip. */
+
+#if TIMER_FREQ < 19
+#error 8254 timer requires TIMER_FREQ >= 19
+#endif
+#if TIMER_FREQ > 1000
+#error TIMER_FREQ <= 1000 recommended
+#endif
+
+/* Number of timer ticks since OS booted. */
+static int64_t ticks;
+static struct list sleeping_threads;
+/* Number of loops per timer tick.
+   Initialized by timer_calibrate(). */
+static unsigned loops_per_tick;
+
+static intr_handler_func timer_interrupt;
+static bool too_many_loops (unsigned loops);
+static void busy_wait (int64_t loops);
+static void real_time_sleep (int64_t num, int32_t denom);
+static void real_time_delay (int64_t num, int32_t denom);
+
+/* Sets up the timer to interrupt TIMER_FREQ times per second,
+   and registers the corresponding interrupt. */
+void
+timer_init (void) 
+{
+  pit_configure_channel (0, 2, TIMER_FREQ);
+  intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  list_init (&sleeping_threads);
+}
+
+/* Calibrates loops_per_tick, used to implement brief delays. */
+void
+timer_calibrate (void) 
+{
+  unsigned high_bit, test_bit;
+
+  ASSERT (intr_get_level () == INTR_ON);
+  printf ("Calibrating timer...  ");
+
+  /* Approximate loops_per_tick as the largest power-of-two
+     still less than one timer tick. */
+  loops_per_tick = 1u << 10;
+  while (!too_many_loops (loops_per_tick << 1)) 
+    {
+      loops_per_tick <<= 1;
+      ASSERT (loops_per_tick != 0);
+    }
+
+  /* Refine the next 8 bits of loops_per_tick. */
+  high_bit = loops_per_tick;
+  for (test_bit = high_bit >> 1; test_bit != high_bit >> 10; test_bit >>= 1)
+    if (!too_many_loops (high_bit | test_bit))
+      loops_per_tick |= test_bit;
+
+  printf ("%'"PRIu64" loops/s.\n", (uint64_t) loops_per_tick * TIMER_FREQ);
+}
+
+/* Returns the number of timer ticks since the OS booted. */
+int64_t
+timer_ticks (void) 
+{
+  enum intr_level old_level = intr_disable ();
+  int64_t t = ticks;
+  intr_set_level (old_level);
+  return t;
+}
+
+/* Returns the number of timer ticks elapsed since THEN, which
+   should be a value once returned by timer_ticks(). */
+int64_t
+timer_elapsed (int64_t then) 
+{
+  return timer_ticks () - then;
+}
+
+/* Sleeps for approximately TICKS timer ticks.  Interrupts must
+   be turned on. */
+void
+timer_sleep (int64_t ticks) 
+{
+  int64_t start = timer_ticks ();
+
+  ASSERT (intr_get_level () == INTR_ON);
+  while (timer_elapsed (start) < ticks) 
+    thread_yield ();
+}
+
+/* Sleeps for approximately MS milliseconds.  Interrupts must be
+   turned on. */
+void
+timer_msleep (int64_t ms) 
+{
+  real_time_sleep (ms, 1000);
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n "thread_block" ../threads/thread.c[27m
+[7mgrep -n "list_push_back" ../threads/thread.c[27m[A]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ grep -n "thread_block" ../threads/thread.c
+grep -n "list_push_back" ../threads/thread.c
+[?2004l[32m[K214[m[K[36m[K:[m[K[01;31m[Kthread_block[m[K (void) 
+[32m[K399[m[K[36m[K:[m[K      [01;31m[Kthread_block[m[K ();
+[32m[K240[m[K[36m[K:[m[K  [01;31m[Klist_push_back[m[K (&ready_list, &t->elem);
+[32m[K311[m[K[36m[K:[m[K    [01;31m[Klist_push_back[m[K (&ready_list, &cur->elem);
+[32m[K468[m[K[36m[K:[m[K  [01;31m[Klist_push_back[m[K (&all_list, &t->allelem);
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n "wakeup_tick" ../threads/thread.h[27mgrep -n "wakeup_tick" ../threads/thread.h
+[?2004l[32m[K91[m[K[36m[K:[m[K    int64_t [01;31m[Kwakeup_tick[m[K;
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mcode ../devices/timer.c[27mcode ../devices/timer.c
+[?2004l[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ make
+[?2004lcd build && make all
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+i386-elf-gcc -c ../../devices/timer.c -o devices/timer.o -m32 -g -msoft-float -O0 -fno-stack-protector -nostdinc -I../.. -I../../lib -I../../lib/kernel -Wall -W -Wstrict-prototypes -Wmissing-prototypes -Wsystem-headers  -MMD -MF devices/timer.d
+i386-elf-ld -melf_i386 -T threads/kernel.lds.s -o kernel.o threads/start.o threads/init.o threads/thread.o threads/switch.o threads/interrupt.o threads/intr-stubs.o threads/synch.o threads/palloc.o threads/malloc.o devices/pit.o devices/timer.o devices/kbd.o devices/vga.o devices/serial.o devices/block.o devices/partition.o devices/ide.o devices/input.o devices/intq.o devices/rtc.o devices/shutdown.o devices/speaker.o lib/debug.o lib/random.o lib/stdio.o lib/stdlib.o lib/string.o lib/arithmetic.o lib/ustar.o lib/kernel/debug.o lib/kernel/list.o lib/kernel/bitmap.o lib/kernel/hash.o lib/kernel/console.o tests/threads/tests.o tests/threads/alarm-wait.o tests/threads/alarm-simultaneous.o tests/threads/alarm-priority.o tests/threads/alarm-zero.o tests/threads/alarm-negative.o tests/threads/priority-change.o tests/threads/priority-donate-one.o tests/threads/priority-donate-multiple.o tests/threads/priority-donate-multiple2.o tests/threads/priority-donate-nest.o tests/threads/priority-donate-sema.o tests/threads/priority-donate-lower.o tests/threads/priority-fifo.o tests/threads/priority-preempt.o tests/threads/priority-sema.o tests/threads/priority-condvar.o tests/threads/priority-donate-chain.o tests/threads/mlfqs-load-1.o tests/threads/mlfqs-load-60.o tests/threads/mlfqs-load-avg.o tests/threads/mlfqs-recent-1.o tests/threads/mlfqs-fair.o tests/threads/mlfqs-block.o
+i386-elf-objdump -S kernel.o > kernel.asm
+i386-elf-nm -n kernel.o > kernel.sym
+i386-elf-objcopy -R .note -R .comment -S kernel.o kernel.bin
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n -A 12 "timer_interrupt" ../devices/timer.c[27mgrep -n -A 12 "timer_interrupt" ../devices/timer.c
+[?2004l[32m[K27[m[K[36m[K:[m[Kstatic intr_handler_func [01;31m[Ktimer_interrupt[m[K;
+[32m[K28[m[K[36m[K-[m[Kstatic bool too_many_loops (unsigned loops);
+[32m[K29[m[K[36m[K-[m[Kstatic void busy_wait (int64_t loops);
+[32m[K30[m[K[36m[K-[m[Kstatic void real_time_sleep (int64_t num, int32_t denom);
+[32m[K31[m[K[36m[K-[m[Kstatic void real_time_delay (int64_t num, int32_t denom);
+[32m[K32[m[K[36m[K-[m[K
+[32m[K33[m[K[36m[K-[m[K/* Sets up the timer to interrupt TIMER_FREQ times per second,
+[32m[K34[m[K[36m[K-[m[K   and registers the corresponding interrupt. */
+[32m[K35[m[K[36m[K-[m[Kvoid
+[32m[K36[m[K[36m[K-[m[Ktimer_init (void) 
+[32m[K37[m[K[36m[K-[m[K{
+[32m[K38[m[K[36m[K-[m[K  pit_configure_channel (0, 2, TIMER_FREQ);
+[32m[K39[m[K[36m[K:[m[K  intr_register_ext (0x20, [01;31m[Ktimer_interrupt[m[K, "8254 Timer");
+[32m[K40[m[K[36m[K-[m[K  list_init (&sleeping_threads);
+[32m[K41[m[K[36m[K-[m[K}
+[32m[K42[m[K[36m[K-[m[K
+[32m[K43[m[K[36m[K-[m[K/* Calibrates loops_per_tick, used to implement brief delays. */
+[32m[K44[m[K[36m[K-[m[Kvoid
+[32m[K45[m[K[36m[K-[m[Ktimer_calibrate (void) 
+[32m[K46[m[K[36m[K-[m[K{
+[32m[K47[m[K[36m[K-[m[K  unsigned high_bit, test_bit;
+[32m[K48[m[K[36m[K-[m[K
+[32m[K49[m[K[36m[K-[m[K  ASSERT (intr_get_level () == INTR_ON);
+[32m[K50[m[K[36m[K-[m[K  printf ("Calibrating timer...  ");
+[32m[K51[m[K[36m[K-[m[K
+[36m[K--[m[K
+[32m[K184[m[K[36m[K:[m[K[01;31m[Ktimer_interrupt[m[K (struct intr_frame *args UNUSED)
+[32m[K185[m[K[36m[K-[m[K{
+[32m[K186[m[K[36m[K-[m[K  ticks++;
+[32m[K187[m[K[36m[K-[m[K  thread_tick ();
+[32m[K188[m[K[36m[K-[m[K}
+[32m[K189[m[K[36m[K-[m[K
+[32m[K190[m[K[36m[K-[m[K/* Returns true if LOOPS iterations waits for more than one timer
+[32m[K191[m[K[36m[K-[m[K   tick, otherwise false. */
+[32m[K192[m[K[36m[K-[m[Kstatic bool
+[32m[K193[m[K[36m[K-[m[Ktoo_many_loops (unsigned loops) 
+[32m[K194[m[K[36m[K-[m[K{
+[32m[K195[m[K[36m[K-[m[K  /* Wait for a timer tick. */
+[32m[K196[m[K[36m[K-[m[K  int64_t start = ticks;
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n -A 12 "list_remove" ../lib/kernel/list.c[27mgrep -n -A 12 "list_remove" ../lib/kernel/list.c
+[?2004l[32m[K24[m[K[36m[K:[m[K   [01;31m[Klist_remove[m[K(): it takes only two pointer assignments and no
+[32m[K25[m[K[36m[K-[m[K   conditionals.  That's a lot simpler than the code would be
+[32m[K26[m[K[36m[K-[m[K   without header elements.
+[32m[K27[m[K[36m[K-[m[K
+[32m[K28[m[K[36m[K-[m[K   (Because only one of the pointers in each header element is used,
+[32m[K29[m[K[36m[K-[m[K   we could in fact combine them into a single header element
+[32m[K30[m[K[36m[K-[m[K   without sacrificing this simplicity.  But using two separate
+[32m[K31[m[K[36m[K-[m[K   elements allows us to do a little bit of checking on some
+[32m[K32[m[K[36m[K-[m[K   operations, which can be valuable.) */
+[32m[K33[m[K[36m[K-[m[K
+[32m[K34[m[K[36m[K-[m[Kstatic bool is_sorted (struct list_elem *a, struct list_elem *b,
+[32m[K35[m[K[36m[K-[m[K                       list_less_func *less, void *aux) UNUSED;
+[32m[K36[m[K[36m[K-[m[K
+[36m[K--[m[K
+[32m[K230[m[K[36m[K:[m[K   The [01;31m[Klist_remove[m[K() return value provides a convenient way to
+[32m[K231[m[K[36m[K-[m[K   iterate and remove elements from a list:
+[32m[K232[m[K[36m[K-[m[K
+[32m[K233[m[K[36m[K:[m[K   for (e = list_begin (&list); e != list_end (&list); e = [01;31m[Klist_remove[m[K (e))
+[32m[K234[m[K[36m[K-[m[K     {
+[32m[K235[m[K[36m[K-[m[K       ...do something with e...
+[32m[K236[m[K[36m[K-[m[K     }
+[32m[K237[m[K[36m[K-[m[K
+[32m[K238[m[K[36m[K-[m[K   If you need to free() elements of the list then you need to be
+[32m[K239[m[K[36m[K-[m[K   more conservative.  Here's an alternate strategy that works
+[32m[K240[m[K[36m[K-[m[K   even in that case:
+[32m[K241[m[K[36m[K-[m[K
+[32m[K242[m[K[36m[K-[m[K   while (!list_empty (&list))
+[32m[K243[m[K[36m[K-[m[K     {
+[32m[K244[m[K[36m[K-[m[K       struct list_elem *e = list_pop_front (&list);
+[32m[K245[m[K[36m[K-[m[K       ...do something with e...
+[36m[K--[m[K
+[32m[K249[m[K[36m[K:[m[K[01;31m[Klist_remove[m[K (struct list_elem *elem)
+[32m[K250[m[K[36m[K-[m[K{
+[32m[K251[m[K[36m[K-[m[K  ASSERT (is_interior (elem));
+[32m[K252[m[K[36m[K-[m[K  elem->prev->next = elem->next;
+[32m[K253[m[K[36m[K-[m[K  elem->next->prev = elem->prev;
+[32m[K254[m[K[36m[K-[m[K  return elem->next;
+[32m[K255[m[K[36m[K-[m[K}
+[32m[K256[m[K[36m[K-[m[K
+[32m[K257[m[K[36m[K-[m[K/* Removes the front element from LIST and returns it.
+[32m[K258[m[K[36m[K-[m[K   Undefined behavior if LIST is empty before removal. */
+[32m[K259[m[K[36m[K-[m[Kstruct list_elem *
+[32m[K260[m[K[36m[K-[m[Klist_pop_front (struct list *list)
+[32m[K261[m[K[36m[K-[m[K{
+[36m[K--[m[K
+[32m[K263[m[K[36m[K:[m[K  [01;31m[Klist_remove[m[K (front);
+[32m[K264[m[K[36m[K-[m[K  return front;
+[32m[K265[m[K[36m[K-[m[K}
+[32m[K266[m[K[36m[K-[m[K
+[32m[K267[m[K[36m[K-[m[K/* Removes the back element from LIST and returns it.
+[32m[K268[m[K[36m[K-[m[K   Undefined behavior if LIST is empty before removal. */
+[32m[K269[m[K[36m[K-[m[Kstruct list_elem *
+[32m[K270[m[K[36m[K-[m[Klist_pop_back (struct list *list)
+[32m[K271[m[K[36m[K-[m[K{
+[32m[K272[m[K[36m[K-[m[K  struct list_elem *back = list_back (list);
+[32m[K273[m[K[36m[K:[m[K  [01;31m[Klist_remove[m[K (back);
+[32m[K274[m[K[36m[K-[m[K  return back;
+[32m[K275[m[K[36m[K-[m[K}
+[32m[K276[m[K[36m[K-[m[K
+[32m[K277[m[K[36m[K-[m[K/* Returns the front element in LIST.
+[32m[K278[m[K[36m[K-[m[K   Undefined behavior if LIST is empty. */
+[32m[K279[m[K[36m[K-[m[Kstruct list_elem *
+[32m[K280[m[K[36m[K-[m[Klist_front (struct list *list)
+[32m[K281[m[K[36m[K-[m[K{
+[32m[K282[m[K[36m[K-[m[K  ASSERT (!list_empty (list));
+[32m[K283[m[K[36m[K-[m[K  return list->head.next;
+[32m[K284[m[K[36m[K-[m[K}
+[32m[K285[m[K[36m[K-[m[K
+[36m[K--[m[K
+[32m[K480[m[K[36m[K:[m[K        [01;31m[Klist_remove[m[K (next);
+[32m[K481[m[K[36m[K-[m[K        if (duplicates != NULL)
+[32m[K482[m[K[36m[K-[m[K          list_push_back (duplicates, next);
+[32m[K483[m[K[36m[K-[m[K      }
+[32m[K484[m[K[36m[K-[m[K    else
+[32m[K485[m[K[36m[K-[m[K      elem = next;
+[32m[K486[m[K[36m[K-[m[K}
+[32m[K487[m[K[36m[K-[m[K
+[32m[K488[m[K[36m[K-[m[K/* Returns the element in LIST with the largest value according
+[32m[K489[m[K[36m[K-[m[K   to LESS given auxiliary data AUX.  If there is more than one
+[32m[K490[m[K[36m[K-[m[K   maximum, returns the one that appears earlier in the list.  If
+[32m[K491[m[K[36m[K-[m[K   the list is empty, returns its tail. */
+[32m[K492[m[K[36m[K-[m[Kstruct list_elem *
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mcode ../devices/timer.c[27mcode ../devices/timer.c
+[?2004l[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -R "list_entry" -n ../threads | head -10[27mgrep -R "list_entry" -n ../threads | head -10
+[?2004l../threads/synch.c:117:    thread_unblock (list_entry (list_pop_front (&sema->waiters),
+../threads/synch.c:320:    sema_up (&list_entry (list_pop_front (&cond->waiters),
+../threads/build/kernel.asm:1835:      struct thread *t = list_entry (e, struct thread, allelem);
+../threads/build/kernel.asm:2251:    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+../threads/build/kernel.asm:5494:    thread_unblock (list_entry (list_pop_front (&sema->waiters),
+../threads/build/kernel.asm:6077:    sema_up (&list_entry (list_pop_front (&cond->waiters),
+../threads/build/kernel.asm:6948:  b = list_entry (list_pop_front (&d->free_list), struct block, free_elem);
+../threads/build/kernel.asm:10024:      struct block *block = list_entry (e, struct block, list_elem);
+../threads/build/kernel.asm:10446:          ? list_entry (list_elem, struct block, list_elem)
+../threads/build/kernel.asm:10450:          ? list_entry (list_elem, struct block, list_elem)
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ make
+[?2004lcd build && make all
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+i386-elf-gcc -c ../../devices/timer.c -o devices/timer.o -m32 -g -msoft-float -O0 -fno-stack-protector -nostdinc -I../.. -I../../lib -I../../lib/kernel -Wall -W -Wstrict-prototypes -Wmissing-prototypes -Wsystem-headers  -MMD -MF devices/timer.d
+i386-elf-ld -melf_i386 -T threads/kernel.lds.s -o kernel.o threads/start.o threads/init.o threads/thread.o threads/switch.o threads/interrupt.o threads/intr-stubs.o threads/synch.o threads/palloc.o threads/malloc.o devices/pit.o devices/timer.o devices/kbd.o devices/vga.o devices/serial.o devices/block.o devices/partition.o devices/ide.o devices/input.o devices/intq.o devices/rtc.o devices/shutdown.o devices/speaker.o lib/debug.o lib/random.o lib/stdio.o lib/stdlib.o lib/string.o lib/arithmetic.o lib/ustar.o lib/kernel/debug.o lib/kernel/list.o lib/kernel/bitmap.o lib/kernel/hash.o lib/kernel/console.o tests/threads/tests.o tests/threads/alarm-wait.o tests/threads/alarm-simultaneous.o tests/threads/alarm-priority.o tests/threads/alarm-zero.o tests/threads/alarm-negative.o tests/threads/priority-change.o tests/threads/priority-donate-one.o tests/threads/priority-donate-multiple.o tests/threads/priority-donate-multiple2.o tests/threads/priority-donate-nest.o tests/threads/priority-donate-sema.o tests/threads/priority-donate-lower.o tests/threads/priority-fifo.o tests/threads/priority-preempt.o tests/threads/priority-sema.o tests/threads/priority-condvar.o tests/threads/priority-donate-chain.o tests/threads/mlfqs-load-1.o tests/threads/mlfqs-load-60.o tests/threads/mlfqs-load-avg.o tests/threads/mlfqs-recent-1.o tests/threads/mlfqs-fair.o tests/threads/mlfqs-block.o
+i386-elf-objdump -S kernel.o > kernel.asm
+i386-elf-nm -n kernel.o > kernel.sym
+i386-elf-objcopy -R .note -R .comment -S kernel.o kernel.bin
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mmake check TESTS=tests/threads/alarm-wait[27mmake check TESTS=tests/threads/alarm-wait
+[?2004lcd build && make check
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+make[1]: *** No rule to make target 'tests/threads/alarm-wait.ck', needed by 'tests/threads/alarm-wait.result'.  Stop.
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+make: *** [../Makefile.kernel:10: check] Error 2
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mls ../tests/threads/alarm*[27mls ../tests/threads/alarm*
+[?2004l../tests/threads/alarm-multiple.ck  ../tests/threads/alarm-priority.c      ../tests/threads/alarm-simultaneous.ck  ../tests/threads/alarm-zero.c
+../tests/threads/alarm-negative.c   ../tests/threads/alarm-priority.ck     ../tests/threads/alarm-single.ck        ../tests/threads/alarm-zero.ck
+../tests/threads/alarm-negative.ck  ../tests/threads/alarm-simultaneous.c  ../tests/threads/alarm-wait.c           ../tests/threads/alarm.pm
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mls ../tests/threads/[27mls ../tests/threads/
+[?2004lGrading            alarm-priority.ck      mlfqs-block.ck    mlfqs-load-avg.ck   priority-condvar.ck           priority-donate-nest.c   priority-preempt.ck
+Make.tests         alarm-simultaneous.c   mlfqs-fair-2.ck   mlfqs-nice-10.ck    priority-donate-chain.c       priority-donate-nest.ck  priority-sema.c
+Rubric.alarm       alarm-simultaneous.ck  mlfqs-fair-20.ck  mlfqs-nice-2.ck     priority-donate-chain.ck      priority-donate-one.c    priority-sema.ck
+Rubric.mlfqs       alarm-single.ck        mlfqs-fair.c      mlfqs-recent-1.c    priority-donate-lower.c       priority-donate-one.ck   tests.c
+Rubric.priority    alarm-wait.c           mlfqs-load-1.c    mlfqs-recent-1.ck   priority-donate-lower.ck      priority-donate-sema.c   tests.h
+alarm-multiple.ck  alarm-zero.c           mlfqs-load-1.ck   mlfqs.pm            priority-donate-multiple.c    priority-donate-sema.ck
+alarm-negative.c   alarm-zero.ck          mlfqs-load-60.c   priority-change.c   priority-donate-multiple.ck   priority-fifo.c
+alarm-negative.ck  alarm.pm               mlfqs-load-60.ck  priority-change.ck  priority-donate-multiple2.c   priority-fifo.ck
+alarm-priority.c   mlfqs-block.c          mlfqs-load-avg.c  priority-condvar.c  priority-donate-multiple2.ck  priority-preempt.c
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mmake check TESTS=tests/threads/alarm-single[27mmake check TESTS=tests/threads/alarm-single
+[?2004lcd build && make check
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+pintos -v -k -T 60 --qemu  -- -q  run alarm-single < /dev/null 2> tests/threads/alarm-single.errors > tests/threads/alarm-single.output
+perl -I../.. ../../tests/threads/alarm-single.ck tests/threads/alarm-single tests/threads/alarm-single.result
+[32mpass tests/threads/alarm-single
+[0mpass tests/threads/alarm-single
+All 1 tests passed.
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mmake check TESTS=tests/threads/alarm-multiple[27mmake check TESTS=tests/threads/alarm-multiple
+[?2004lcd build && make check
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+pintos -v -k -T 60 --qemu  -- -q  run alarm-multiple < /dev/null 2> tests/threads/alarm-multiple.errors > tests/threads/alarm-multiple.output
+perl -I../.. ../../tests/threads/alarm-multiple.ck tests/threads/alarm-multiple tests/threads/alarm-multiple.result
+[32mpass tests/threads/alarm-multiple
+[0mpass tests/threads/alarm-multiple
+All 1 tests passed.
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mmake check TESTS="tests/threads/alarm-simultaneous tests/threads/alarm-zero tests/threads/alarm-negative"[27m[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cmake check TESTS="tests/threads/alarm-simultaneous tests/threads/alarm-zero tests/threads/alarm-negative"
+[?2004lcd build && make check
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+pintos -v -k -T 60 --qemu  -- -q  run alarm-simultaneous < /dev/null 2> tests/threads/alarm-simultaneous.errors > tests/threads/alarm-simultaneous.output
+perl -I../.. ../../tests/threads/alarm-simultaneous.ck tests/threads/alarm-simultaneous tests/threads/alarm-simultaneous.result
+[32mpass tests/threads/alarm-simultaneous
+[0mpintos -v -k -T 60 --qemu  -- -q  run alarm-zero < /dev/null 2> tests/threads/alarm-zero.errors > tests/threads/alarm-zero.output
+perl -I../.. ../../tests/threads/alarm-zero.ck tests/threads/alarm-zero tests/threads/alarm-zero.result
+[32mpass tests/threads/alarm-zero
+[0mpintos -v -k -T 60 --qemu  -- -q  run alarm-negative < /dev/null 2> tests/threads/alarm-negative.errors > tests/threads/alarm-negative.output
+perl -I../.. ../../tests/threads/alarm-negative.ck tests/threads/alarm-negative tests/threads/alarm-negative.result
+[32mpass tests/threads/alarm-negative
+[0mpass tests/threads/alarm-simultaneous
+pass tests/threads/alarm-zero
+pass tests/threads/alarm-negative
+All 3 tests passed.
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mmake check TESTS=tests/threads/alarm-priority[27mmake check TESTS=tests/threads/alarm-priority
+[?2004lcd build && make check
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+pintos -v -k -T 60 --qemu  -- -q  run alarm-priority < /dev/null 2> tests/threads/alarm-priority.errors > tests/threads/alarm-priority.output
+perl -I../.. ../../tests/threads/alarm-priority.ck tests/threads/alarm-priority tests/threads/alarm-priority.result
+[31mFAIL tests/threads/alarm-priority
+[0mTest output failed to match any acceptable form.
+
+Acceptable output:
+  (alarm-priority) begin
+  (alarm-priority) Thread priority 30 woke up.
+  (alarm-priority) Thread priority 29 woke up.
+  (alarm-priority) Thread priority 28 woke up.
+  (alarm-priority) Thread priority 27 woke up.
+  (alarm-priority) Thread priority 26 woke up.
+  (alarm-priority) Thread priority 25 woke up.
+  (alarm-priority) Thread priority 24 woke up.
+  (alarm-priority) Thread priority 23 woke up.
+  (alarm-priority) Thread priority 22 woke up.
+  (alarm-priority) Thread priority 21 woke up.
+  (alarm-priority) end
+Differences in `diff -u' format:
+  (alarm-priority) begin
++ (alarm-priority) Thread priorit(alarm-priority) Thread priority 25 woke up.
++ (alarm-priority) Thread priority 24 woke up.
++ (alarm-priority) Thread priority 23 woke up.
++ (alarm-priority) Thread priority 22 woke up.
++ (alarm-priority) Thread priority 21 woke up.
+  (alarm-priority) Thread priority 30 woke up.
+  (alarm-priority) Thread priority 29 woke up.
+  (alarm-priority) Thread priority 28 woke up.
+  (alarm-priority) Thread priority 27 woke up.
+  (alarm-priority) Thread priority 26 woke up.
+- (alarm-priority) Thread priority 25 woke up.
+- (alarm-priority) Thread priority 24 woke up.
+- (alarm-priority) Thread priority 23 woke up.
+- (alarm-priority) Thread priority 22 woke up.
+- (alarm-priority) Thread priority 21 woke up.
+  (alarm-priority) end
+FAIL tests/threads/alarm-priority
+1 of 1 tests failed.
+make[1]: *** [../../tests/Make.tests:27: check] Error 1
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+make: *** [../Makefile.kernel:10: check] Error 2
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7msed -n '220,250p' ../threads/thread.c[27msed -n '220,250p' ../threads/thread.c
+[?2004l  schedule ();
+}
+
+/* Transitions a blocked thread T to the ready-to-run state.
+   This is an error if T is not blocked.  (Use thread_yield() to
+   make the running thread ready.)
+
+   This function does not preempt the running thread.  This can
+   be important: if the caller had disabled interrupts itself,
+   it may expect that it can atomically unblock a thread and
+   update other data. */
+void
+thread_unblock (struct thread *t) 
+{
+  enum intr_level old_level;
+
+  ASSERT (is_thread (t));
+
+  old_level = intr_disable ();
+  ASSERT (t->status == THREAD_BLOCKED);
+  list_push_back (&ready_list, &t->elem);
+  t->status = THREAD_READY;
+  intr_set_level (old_level);
+}
+
+/* Returns the name of the running thread. */
+const char *
+thread_name (void) 
+{
+  return thread_current ()->name;
+}
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7msed -n '1,160p' ../tests/threads/alarm-priority.c[27msed -n '1,160p' ../tests/threads/alarm-priority.c
+[?2004l/* Checks that when the alarm clock wakes up threads, the
+   higher-priority threads run first. */
+
+#include <stdio.h>
+#include "tests/threads/tests.h"
+#include "threads/init.h"
+#include "threads/malloc.h"
+#include "threads/synch.h"
+#include "threads/thread.h"
+#include "devices/timer.h"
+
+static thread_func alarm_priority_thread;
+static int64_t wake_time;
+static struct semaphore wait_sema;
+
+void
+test_alarm_priority (void) 
+{
+  int i;
+  
+  /* This test does not work with the MLFQS. */
+  ASSERT (!thread_mlfqs);
+
+  wake_time = timer_ticks () + 5 * TIMER_FREQ;
+  sema_init (&wait_sema, 0);
+  
+  for (i = 0; i < 10; i++) 
+    {
+      int priority = PRI_DEFAULT - (i + 5) % 10 - 1;
+      char name[16];
+      snprintf (name, sizeof name, "priority %d", priority);
+      thread_create (name, priority, alarm_priority_thread, NULL);
+    }
+
+  thread_set_priority (PRI_MIN);
+
+  for (i = 0; i < 10; i++)
+    sema_down (&wait_sema);
+}
+
+static void
+alarm_priority_thread (void *aux UNUSED) 
+{
+  /* Busy-wait until the current time changes. */
+  int64_t start_time = timer_ticks ();
+  while (timer_elapsed (start_time) == 0)
+    continue;
+
+  /* Now we know we're at the very beginning of a timer tick, so
+     we can call timer_sleep() without worrying about races
+     between checking the time and a timer interrupt. */
+  timer_sleep (wake_time - timer_ticks ());
+
+  /* Print a message on wake-up. */
+  msg ("Thread %s woke up.", thread_name ());
+
+  sema_up (&wait_sema);
+}
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n "ready_list" ../threads/thread.c[27mgrep -n "ready_list" ../threads/thread.c
+[?2004l[32m[K25[m[K[36m[K:[m[Kstatic struct list [01;31m[Kready_list[m[K;
+[32m[K93[m[K[36m[K:[m[K  list_init (&[01;31m[Kready_list[m[K);
+[32m[K240[m[K[36m[K:[m[K  list_push_back (&[01;31m[Kready_list[m[K, &t->elem);
+[32m[K311[m[K[36m[K:[m[K    list_push_back (&[01;31m[Kready_list[m[K, &cur->elem);
+[32m[K493[m[K[36m[K:[m[K  if (list_empty (&[01;31m[Kready_list[m[K))
+[32m[K496[m[K[36m[K:[m[K    return list_entry (list_pop_front (&[01;31m[Kready_list[m[K), struct thread, elem);
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n -A15 "next_thread_to_run" ../threads/thread.c[27m[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cgrep -n -A15 "next_thread_to_run" ../threads/thread.c
+[?2004l[32m[K66[m[K[36m[K:[m[Kstatic struct thread *[01;31m[Knext_thread_to_run[m[K (void);
+[32m[K67[m[K[36m[K-[m[Kstatic void init_thread (struct thread *, const char *name, int priority);
+[32m[K68[m[K[36m[K-[m[Kstatic bool is_thread (struct thread *) UNUSED;
+[32m[K69[m[K[36m[K-[m[Kstatic void *alloc_frame (struct thread *, size_t size);
+[32m[K70[m[K[36m[K-[m[Kstatic void schedule (void);
+[32m[K71[m[K[36m[K-[m[Kvoid thread_schedule_tail (struct thread *prev);
+[32m[K72[m[K[36m[K-[m[Kstatic tid_t allocate_tid (void);
+[32m[K73[m[K[36m[K-[m[K
+[32m[K74[m[K[36m[K-[m[K/* Initializes the threading system by transforming the code
+[32m[K75[m[K[36m[K-[m[K   that's currently running into a thread.  This can't work in
+[32m[K76[m[K[36m[K-[m[K   general and it is possible in this case only because loader.S
+[32m[K77[m[K[36m[K-[m[K   was careful to put the bottom of the stack at a page boundary.
+[32m[K78[m[K[36m[K-[m[K
+[32m[K79[m[K[36m[K-[m[K   Also initializes the run queue and the tid lock.
+[32m[K80[m[K[36m[K-[m[K
+[32m[K81[m[K[36m[K-[m[K   After calling this function, be sure to initialize the page
+[36m[K--[m[K
+[32m[K386[m[K[36m[K:[m[K   ready list.  It is returned by [01;31m[Knext_thread_to_run[m[K() as a
+[32m[K387[m[K[36m[K-[m[K   special case when the ready list is empty. */
+[32m[K388[m[K[36m[K-[m[Kstatic void
+[32m[K389[m[K[36m[K-[m[Kidle (void *idle_started_ UNUSED) 
+[32m[K390[m[K[36m[K-[m[K{
+[32m[K391[m[K[36m[K-[m[K  struct semaphore *idle_started = idle_started_;
+[32m[K392[m[K[36m[K-[m[K  idle_thread = thread_current ();
+[32m[K393[m[K[36m[K-[m[K  sema_up (idle_started);
+[32m[K394[m[K[36m[K-[m[K
+[32m[K395[m[K[36m[K-[m[K  for (;;) 
+[32m[K396[m[K[36m[K-[m[K    {
+[32m[K397[m[K[36m[K-[m[K      /* Let someone else run. */
+[32m[K398[m[K[36m[K-[m[K      intr_disable ();
+[32m[K399[m[K[36m[K-[m[K      thread_block ();
+[32m[K400[m[K[36m[K-[m[K
+[32m[K401[m[K[36m[K-[m[K      /* Re-enable interrupts and wait for the next one.
+[36m[K--[m[K
+[32m[K491[m[K[36m[K:[m[K[01;31m[Knext_thread_to_run[m[K (void) 
+[32m[K492[m[K[36m[K-[m[K{
+[32m[K493[m[K[36m[K-[m[K  if (list_empty (&ready_list))
+[32m[K494[m[K[36m[K-[m[K    return idle_thread;
+[32m[K495[m[K[36m[K-[m[K  else
+[32m[K496[m[K[36m[K-[m[K    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+[32m[K497[m[K[36m[K-[m[K}
+[32m[K498[m[K[36m[K-[m[K
+[32m[K499[m[K[36m[K-[m[K/* Completes a thread switch by activating the new thread's page
+[32m[K500[m[K[36m[K-[m[K   tables, and, if the previous thread is dying, destroying it.
+[32m[K501[m[K[36m[K-[m[K
+[32m[K502[m[K[36m[K-[m[K   At this function's invocation, we just switched from thread
+[32m[K503[m[K[36m[K-[m[K   PREV, the new thread is already running, and interrupts are
+[32m[K504[m[K[36m[K-[m[K   still disabled.  This function is normally invoked by
+[32m[K505[m[K[36m[K-[m[K   thread_schedule() as its final action before returning, but
+[32m[K506[m[K[36m[K-[m[K   the first time a thread is scheduled it is called by
+[36m[K--[m[K
+[32m[K556[m[K[36m[K:[m[K  struct thread *next = [01;31m[Knext_thread_to_run[m[K ();
+[32m[K557[m[K[36m[K-[m[K  struct thread *prev = NULL;
+[32m[K558[m[K[36m[K-[m[K
+[32m[K559[m[K[36m[K-[m[K  ASSERT (intr_get_level () == INTR_OFF);
+[32m[K560[m[K[36m[K-[m[K  ASSERT (cur->status != THREAD_RUNNING);
+[32m[K561[m[K[36m[K-[m[K  ASSERT (is_thread (next));
+[32m[K562[m[K[36m[K-[m[K
+[32m[K563[m[K[36m[K-[m[K  if (cur != next)
+[32m[K564[m[K[36m[K-[m[K    prev = switch_threads (cur, next);
+[32m[K565[m[K[36m[K-[m[K  thread_schedule_tail (prev);
+[32m[K566[m[K[36m[K-[m[K}
+[32m[K567[m[K[36m[K-[m[K
+[32m[K568[m[K[36m[K-[m[K/* Returns a tid to use for a new thread. */
+[32m[K569[m[K[36m[K-[m[Kstatic tid_t
+[32m[K570[m[K[36m[K-[m[Kallocate_tid (void) 
+[32m[K571[m[K[36m[K-[m[K{
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mcat ../tests/threads/Rubric.alarm[27mcat ../tests/threads/Rubric.alarm
+[?2004lFunctionality and robustness of alarm clock:
+4	alarm-single
+4	alarm-multiple
+4	alarm-simultaneous
+4	alarm-priority
+
+1	alarm-zero
+1	alarm-negative
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -R "list_insert_ordered" ../threads[27mgrep -R "list_insert_ordered" ../threads
+[?2004lgrep: ../threads/build/kernel.o: binary file matches
+[35m[K../threads/build/kernel.sym[m[K[36m[K:[m[Kc002a313 T [01;31m[Klist_insert_ordered[m[K
+[35m[K../threads/build/kernel.asm[m[K[36m[K:[m[Kc002a313 <[01;31m[Klist_insert_ordered[m[K>:
+[35m[K../threads/build/kernel.asm[m[K[36m[K:[m[K[01;31m[Klist_insert_ordered[m[K (struct list *list, struct list_elem *elem,
+[35m[K../threads/build/kernel.asm[m[K[36m[K:[m[Kc002a31d:	75 21                	jne    c002a340 <[01;31m[Klist_insert_ordered[m[K+0x2d>
+[35m[K../threads/build/kernel.asm[m[K[36m[K:[m[Kc002a344:	75 21                	jne    c002a367 <[01;31m[Klist_insert_ordered[m[K+0x54>
+[35m[K../threads/build/kernel.asm[m[K[36m[K:[m[Kc002a36b:	75 21                	jne    c002a38e <[01;31m[Klist_insert_ordered[m[K+0x7b>
+[35m[K../threads/build/kernel.asm[m[K[36m[K:[m[Kc002a39f:	eb 29                	jmp    c002a3ca <[01;31m[Klist_insert_ordered[m[K+0xb7>
+[35m[K../threads/build/kernel.asm[m[K[36m[K:[m[Kc002a3b7:	75 26                	jne    c002a3df <[01;31m[Klist_insert_ordered[m[K+0xcc>
+[35m[K../threads/build/kernel.asm[m[K[36m[K:[m[Kc002a3db:	75 c4                	jne    c002a3a1 <[01;31m[Klist_insert_ordered[m[K+0x8e>
+[35m[K../threads/build/kernel.asm[m[K[36m[K:[m[Kc002a3dd:	eb 01                	jmp    c002a3e0 <[01;31m[Klist_insert_ordered[m[K+0xcd>
+grep: ../threads/build/lib/kernel/list.o: binary file matches
+grep: ../threads/build/kernel.bin: binary file matches
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n -A45 "thread_create" ../threads/thread.c[27mgrep -n -A45 "thread_create" ../threads/thread.c
+[?2004l[32m[K83[m[K[36m[K:[m[K   [01;31m[Kthread_create[m[K().
+[32m[K84[m[K[36m[K-[m[K
+[32m[K85[m[K[36m[K-[m[K   It is not safe to call thread_current() until this function
+[32m[K86[m[K[36m[K-[m[K   finishes. */
+[32m[K87[m[K[36m[K-[m[Kvoid
+[32m[K88[m[K[36m[K-[m[Kthread_init (void) 
+[32m[K89[m[K[36m[K-[m[K{
+[32m[K90[m[K[36m[K-[m[K  ASSERT (intr_get_level () == INTR_OFF);
+[32m[K91[m[K[36m[K-[m[K
+[32m[K92[m[K[36m[K-[m[K  lock_init (&tid_lock);
+[32m[K93[m[K[36m[K-[m[K  list_init (&ready_list);
+[32m[K94[m[K[36m[K-[m[K  list_init (&all_list);
+[32m[K95[m[K[36m[K-[m[K
+[32m[K96[m[K[36m[K-[m[K  /* Set up a thread structure for the running thread. */
+[32m[K97[m[K[36m[K-[m[K  initial_thread = running_thread ();
+[32m[K98[m[K[36m[K-[m[K  init_thread (initial_thread, "main", PRI_DEFAULT);
+[32m[K99[m[K[36m[K-[m[K  initial_thread->status = THREAD_RUNNING;
+[32m[K100[m[K[36m[K-[m[K  initial_thread->tid = allocate_tid ();
+[32m[K101[m[K[36m[K-[m[K}
+[32m[K102[m[K[36m[K-[m[K
+[32m[K103[m[K[36m[K-[m[K/* Starts preemptive thread scheduling by enabling interrupts.
+[32m[K104[m[K[36m[K-[m[K   Also creates the idle thread. */
+[32m[K105[m[K[36m[K-[m[Kvoid
+[32m[K106[m[K[36m[K-[m[Kthread_start (void) 
+[32m[K107[m[K[36m[K-[m[K{
+[32m[K108[m[K[36m[K-[m[K  /* Create the idle thread. */
+[32m[K109[m[K[36m[K-[m[K  struct semaphore idle_started;
+[32m[K110[m[K[36m[K-[m[K  sema_init (&idle_started, 0);
+[32m[K111[m[K[36m[K:[m[K  [01;31m[Kthread_create[m[K ("idle", PRI_MIN, idle, &idle_started);
+[32m[K112[m[K[36m[K-[m[K
+[32m[K113[m[K[36m[K-[m[K  /* Start preemptive thread scheduling. */
+[32m[K114[m[K[36m[K-[m[K  intr_enable ();
+[32m[K115[m[K[36m[K-[m[K
+[32m[K116[m[K[36m[K-[m[K  /* Wait for the idle thread to initialize idle_thread. */
+[32m[K117[m[K[36m[K-[m[K  sema_down (&idle_started);
+[32m[K118[m[K[36m[K-[m[K}
+[32m[K119[m[K[36m[K-[m[K
+[32m[K120[m[K[36m[K-[m[K/* Called by the timer interrupt handler at each timer tick.
+[32m[K121[m[K[36m[K-[m[K   Thus, this function runs in an external interrupt context. */
+[32m[K122[m[K[36m[K-[m[Kvoid
+[32m[K123[m[K[36m[K-[m[Kthread_tick (void) 
+[32m[K124[m[K[36m[K-[m[K{
+[32m[K125[m[K[36m[K-[m[K  struct thread *t = thread_current ();
+[32m[K126[m[K[36m[K-[m[K
+[32m[K127[m[K[36m[K-[m[K  /* Update statistics. */
+[32m[K128[m[K[36m[K-[m[K  if (t == idle_thread)
+[32m[K129[m[K[36m[K-[m[K    idle_ticks++;
+[32m[K130[m[K[36m[K-[m[K#ifdef USERPROG
+[32m[K131[m[K[36m[K-[m[K  else if (t->pagedir != NULL)
+[32m[K132[m[K[36m[K-[m[K    user_ticks++;
+[32m[K133[m[K[36m[K-[m[K#endif
+[32m[K134[m[K[36m[K-[m[K  else
+[32m[K135[m[K[36m[K-[m[K    kernel_ticks++;
+[32m[K136[m[K[36m[K-[m[K
+[32m[K137[m[K[36m[K-[m[K  /* Enforce preemption. */
+[32m[K138[m[K[36m[K-[m[K  if (++thread_ticks >= TIME_SLICE)
+[32m[K139[m[K[36m[K-[m[K    intr_yield_on_return ();
+[32m[K140[m[K[36m[K-[m[K}
+[32m[K141[m[K[36m[K-[m[K
+[32m[K142[m[K[36m[K-[m[K/* Prints thread statistics. */
+[32m[K143[m[K[36m[K-[m[Kvoid
+[32m[K144[m[K[36m[K-[m[Kthread_print_stats (void) 
+[32m[K145[m[K[36m[K-[m[K{
+[32m[K146[m[K[36m[K-[m[K  printf ("Thread: %lld idle ticks, %lld kernel ticks, %lld user ticks\n",
+[32m[K147[m[K[36m[K-[m[K          idle_ticks, kernel_ticks, user_ticks);
+[32m[K148[m[K[36m[K-[m[K}
+[32m[K149[m[K[36m[K-[m[K
+[32m[K150[m[K[36m[K-[m[K/* Creates a new kernel thread named NAME with the given initial
+[32m[K151[m[K[36m[K-[m[K   PRIORITY, which executes FUNCTION passing AUX as the argument,
+[32m[K152[m[K[36m[K-[m[K   and adds it to the ready queue.  Returns the thread identifier
+[32m[K153[m[K[36m[K-[m[K   for the new thread, or TID_ERROR if creation fails.
+[32m[K154[m[K[36m[K-[m[K
+[32m[K155[m[K[36m[K-[m[K   If thread_start() has been called, then the new thread may be
+[32m[K156[m[K[36m[K:[m[K   scheduled before [01;31m[Kthread_create[m[K() returns.  It could even exit
+[32m[K157[m[K[36m[K:[m[K   before [01;31m[Kthread_create[m[K() returns.  Contrariwise, the original
+[32m[K158[m[K[36m[K-[m[K   thread may run for any amount of time before the new thread is
+[32m[K159[m[K[36m[K-[m[K   scheduled.  Use a semaphore or some other form of
+[32m[K160[m[K[36m[K-[m[K   synchronization if you need to ensure ordering.
+[32m[K161[m[K[36m[K-[m[K
+[32m[K162[m[K[36m[K-[m[K   The code provided sets the new thread's `priority' member to
+[32m[K163[m[K[36m[K-[m[K   PRIORITY, but no actual priority scheduling is implemented.
+[32m[K164[m[K[36m[K-[m[K   Priority scheduling is the goal of Problem 1-3. */
+[32m[K165[m[K[36m[K-[m[Ktid_t
+[32m[K166[m[K[36m[K:[m[K[01;31m[Kthread_create[m[K (const char *name, int priority,
+[32m[K167[m[K[36m[K-[m[K               thread_func *function, void *aux) 
+[32m[K168[m[K[36m[K-[m[K{
+[32m[K169[m[K[36m[K-[m[K  struct thread *t;
+[32m[K170[m[K[36m[K-[m[K  struct kernel_thread_frame *kf;
+[32m[K171[m[K[36m[K-[m[K  struct switch_entry_frame *ef;
+[32m[K172[m[K[36m[K-[m[K  struct switch_threads_frame *sf;
+[32m[K173[m[K[36m[K-[m[K  tid_t tid;
+[32m[K174[m[K[36m[K-[m[K
+[32m[K175[m[K[36m[K-[m[K  ASSERT (function != NULL);
+[32m[K176[m[K[36m[K-[m[K
+[32m[K177[m[K[36m[K-[m[K  /* Allocate thread. */
+[32m[K178[m[K[36m[K-[m[K  t = palloc_get_page (PAL_ZERO);
+[32m[K179[m[K[36m[K-[m[K  if (t == NULL)
+[32m[K180[m[K[36m[K-[m[K    return TID_ERROR;
+[32m[K181[m[K[36m[K-[m[K
+[32m[K182[m[K[36m[K-[m[K  /* Initialize thread. */
+[32m[K183[m[K[36m[K-[m[K  init_thread (t, name, priority);
+[32m[K184[m[K[36m[K-[m[K  tid = t->tid = allocate_tid ();
+[32m[K185[m[K[36m[K-[m[K
+[32m[K186[m[K[36m[K-[m[K  /* Stack frame for kernel_thread(). */
+[32m[K187[m[K[36m[K-[m[K  kf = alloc_frame (t, sizeof *kf);
+[32m[K188[m[K[36m[K-[m[K  kf->eip = NULL;
+[32m[K189[m[K[36m[K-[m[K  kf->function = function;
+[32m[K190[m[K[36m[K-[m[K  kf->aux = aux;
+[32m[K191[m[K[36m[K-[m[K
+[32m[K192[m[K[36m[K-[m[K  /* Stack frame for switch_entry(). */
+[32m[K193[m[K[36m[K-[m[K  ef = alloc_frame (t, sizeof *ef);
+[32m[K194[m[K[36m[K-[m[K  ef->eip = (void (*) (void)) kernel_thread;
+[32m[K195[m[K[36m[K-[m[K
+[32m[K196[m[K[36m[K-[m[K  /* Stack frame for switch_threads(). */
+[32m[K197[m[K[36m[K-[m[K  sf = alloc_frame (t, sizeof *sf);
+[32m[K198[m[K[36m[K-[m[K  sf->eip = switch_entry;
+[32m[K199[m[K[36m[K-[m[K  sf->ebp = 0;
+[32m[K200[m[K[36m[K-[m[K
+[32m[K201[m[K[36m[K-[m[K  /* Add to run queue. */
+[32m[K202[m[K[36m[K-[m[K  thread_unblock (t);
+[32m[K203[m[K[36m[K-[m[K
+[32m[K204[m[K[36m[K-[m[K  return tid;
+[32m[K205[m[K[36m[K-[m[K}
+[32m[K206[m[K[36m[K-[m[K
+[32m[K207[m[K[36m[K-[m[K/* Puts the current thread to sleep.  It will not be scheduled
+[32m[K208[m[K[36m[K-[m[K   again until awoken by thread_unblock().
+[32m[K209[m[K[36m[K-[m[K
+[32m[K210[m[K[36m[K-[m[K   This function must be called with interrupts turned off.  It
+[32m[K211[m[K[36m[K-[m[K   is usually a better idea to use one of the synchronization
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n -A25 "list_insert_ordered" ../lib/kernel/list.c[27m[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cgrep -n -A25 "list_insert_ordered" ../lib/kernel/list.c
+[?2004l[32m[K446[m[K[36m[K:[m[K[01;31m[Klist_insert_ordered[m[K (struct list *list, struct list_elem *elem,
+[32m[K447[m[K[36m[K-[m[K                     list_less_func *less, void *aux)
+[32m[K448[m[K[36m[K-[m[K{
+[32m[K449[m[K[36m[K-[m[K  struct list_elem *e;
+[32m[K450[m[K[36m[K-[m[K
+[32m[K451[m[K[36m[K-[m[K  ASSERT (list != NULL);
+[32m[K452[m[K[36m[K-[m[K  ASSERT (elem != NULL);
+[32m[K453[m[K[36m[K-[m[K  ASSERT (less != NULL);
+[32m[K454[m[K[36m[K-[m[K
+[32m[K455[m[K[36m[K-[m[K  for (e = list_begin (list); e != list_end (list); e = list_next (e))
+[32m[K456[m[K[36m[K-[m[K    if (less (elem, e, aux))
+[32m[K457[m[K[36m[K-[m[K      break;
+[32m[K458[m[K[36m[K-[m[K  return list_insert (e, elem);
+[32m[K459[m[K[36m[K-[m[K}
+[32m[K460[m[K[36m[K-[m[K
+[32m[K461[m[K[36m[K-[m[K/* Iterates through LIST and removes all but the first in each
+[32m[K462[m[K[36m[K-[m[K   set of adjacent elements that are equal according to LESS
+[32m[K463[m[K[36m[K-[m[K   given auxiliary data AUX.  If DUPLICATES is non-null, then the
+[32m[K464[m[K[36m[K-[m[K   elements from LIST are appended to DUPLICATES. */
+[32m[K465[m[K[36m[K-[m[Kvoid
+[32m[K466[m[K[36m[K-[m[Klist_unique (struct list *list, struct list *duplicates,
+[32m[K467[m[K[36m[K-[m[K             list_less_func *less, void *aux)
+[32m[K468[m[K[36m[K-[m[K{
+[32m[K469[m[K[36m[K-[m[K  struct list_elem *elem, *next;
+[32m[K470[m[K[36m[K-[m[K
+[32m[K471[m[K[36m[K-[m[K  ASSERT (list != NULL);
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n -A8 "list_insert_ordered" ../lib/kernel/list.h[27m[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cgrep -n -A8 "list_insert_ordered" ../lib/kernel/list.h
+[?2004l[32m[K172[m[K[36m[K:[m[Kvoid [01;31m[Klist_insert_ordered[m[K (struct list *, struct list_elem *,
+[32m[K173[m[K[36m[K-[m[K                          list_less_func *, void *aux);
+[32m[K174[m[K[36m[K-[m[Kvoid list_unique (struct list *, struct list *duplicates,
+[32m[K175[m[K[36m[K-[m[K                  list_less_func *, void *aux);
+[32m[K176[m[K[36m[K-[m[K
+[32m[K177[m[K[36m[K-[m[K/* Max and min. */
+[32m[K178[m[K[36m[K-[m[Kstruct list_elem *list_max (struct list *, list_less_func *, void *aux);
+[32m[K179[m[K[36m[K-[m[Kstruct list_elem *list_min (struct list *, list_less_func *, void *aux);
+[32m[K180[m[K[36m[K-[m[K
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n -A25 "list_max (" ../lib/kernel/list.c[27mgrep -n -A25 "list_max (" ../lib/kernel/list.c
+[?2004l[32m[K493[m[K[36m[K:[m[K[01;31m[Klist_max ([m[Kstruct list *list, list_less_func *less, void *aux)
+[32m[K494[m[K[36m[K-[m[K{
+[32m[K495[m[K[36m[K-[m[K  struct list_elem *max = list_begin (list);
+[32m[K496[m[K[36m[K-[m[K  if (max != list_end (list)) 
+[32m[K497[m[K[36m[K-[m[K    {
+[32m[K498[m[K[36m[K-[m[K      struct list_elem *e;
+[32m[K499[m[K[36m[K-[m[K      
+[32m[K500[m[K[36m[K-[m[K      for (e = list_next (max); e != list_end (list); e = list_next (e))
+[32m[K501[m[K[36m[K-[m[K        if (less (max, e, aux))
+[32m[K502[m[K[36m[K-[m[K          max = e; 
+[32m[K503[m[K[36m[K-[m[K    }
+[32m[K504[m[K[36m[K-[m[K  return max;
+[32m[K505[m[K[36m[K-[m[K}
+[32m[K506[m[K[36m[K-[m[K
+[32m[K507[m[K[36m[K-[m[K/* Returns the element in LIST with the smallest value according
+[32m[K508[m[K[36m[K-[m[K   to LESS given auxiliary data AUX.  If there is more than one
+[32m[K509[m[K[36m[K-[m[K   minimum, returns the one that appears earlier in the list.  If
+[32m[K510[m[K[36m[K-[m[K   the list is empty, returns its tail. */
+[32m[K511[m[K[36m[K-[m[Kstruct list_elem *
+[32m[K512[m[K[36m[K-[m[Klist_min (struct list *list, list_less_func *less, void *aux)
+[32m[K513[m[K[36m[K-[m[K{
+[32m[K514[m[K[36m[K-[m[K  struct list_elem *min = list_begin (list);
+[32m[K515[m[K[36m[K-[m[K  if (min != list_end (list)) 
+[32m[K516[m[K[36m[K-[m[K    {
+[32m[K517[m[K[36m[K-[m[K      struct list_elem *e;
+[32m[K518[m[K[36m[K-[m[K      
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mgrep -n -A12 "typedef bool list_less_func" ../lib/kernel/list.h[27m[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cgrep -n -A12 "typedef bool list_less_func" ../lib/kernel/list.h
+[?2004l[32m[K165[m[K[36m[K:[m[K[01;31m[Ktypedef bool list_less_func[m[K (const struct list_elem *a,
+[32m[K166[m[K[36m[K-[m[K                             const struct list_elem *b,
+[32m[K167[m[K[36m[K-[m[K                             void *aux);
+[32m[K168[m[K[36m[K-[m[K
+[32m[K169[m[K[36m[K-[m[K/* Operations on lists with ordered elements. */
+[32m[K170[m[K[36m[K-[m[Kvoid list_sort (struct list *,
+[32m[K171[m[K[36m[K-[m[K                list_less_func *, void *aux);
+[32m[K172[m[K[36m[K-[m[Kvoid list_insert_ordered (struct list *, struct list_elem *,
+[32m[K173[m[K[36m[K-[m[K                          list_less_func *, void *aux);
+[32m[K174[m[K[36m[K-[m[Kvoid list_unique (struct list *, struct list *duplicates,
+[32m[K175[m[K[36m[K-[m[K                  list_less_func *, void *aux);
+[32m[K176[m[K[36m[K-[m[K
+[32m[K177[m[K[36m[K-[m[K/* Max and min. */
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mmake[27mmake
+[?2004lcd build && make all
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+i386-elf-gcc -c ../../devices/timer.c -o devices/timer.o -m32 -g -msoft-float -O0 -fno-stack-protector -nostdinc -I../.. -I../../lib -I../../lib/kernel -Wall -W -Wstrict-prototypes -Wmissing-prototypes -Wsystem-headers  -MMD -MF devices/timer.d
+[01m[K../../devices/timer.c:185:1:[m[K [01;35m[Kwarning: [m[K'[01m[Kmaior_prioridade[m[K' defined but not used [[01;35m[K-Wunused-function[m[K]
+ [01;35m[Kmaior_prioridade[m[K (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+ [01;35m[K^~~~~~~~~~~~~~~~[m[K
+i386-elf-ld -melf_i386 -T threads/kernel.lds.s -o kernel.o threads/start.o threads/init.o threads/thread.o threads/switch.o threads/interrupt.o threads/intr-stubs.o threads/synch.o threads/palloc.o threads/malloc.o devices/pit.o devices/timer.o devices/kbd.o devices/vga.o devices/serial.o devices/block.o devices/partition.o devices/ide.o devices/input.o devices/intq.o devices/rtc.o devices/shutdown.o devices/speaker.o lib/debug.o lib/random.o lib/stdio.o lib/stdlib.o lib/string.o lib/arithmetic.o lib/ustar.o lib/kernel/debug.o lib/kernel/list.o lib/kernel/bitmap.o lib/kernel/hash.o lib/kernel/console.o tests/threads/tests.o tests/threads/alarm-wait.o tests/threads/alarm-simultaneous.o tests/threads/alarm-priority.o tests/threads/alarm-zero.o tests/threads/alarm-negative.o tests/threads/priority-change.o tests/threads/priority-donate-one.o tests/threads/priority-donate-multiple.o tests/threads/priority-donate-multiple2.o tests/threads/priority-donate-nest.o tests/threads/priority-donate-sema.o tests/threads/priority-donate-lower.o tests/threads/priority-fifo.o tests/threads/priority-preempt.o tests/threads/priority-sema.o tests/threads/priority-condvar.o tests/threads/priority-donate-chain.o tests/threads/mlfqs-load-1.o tests/threads/mlfqs-load-60.o tests/threads/mlfqs-load-avg.o tests/threads/mlfqs-recent-1.o tests/threads/mlfqs-fair.o tests/threads/mlfqs-block.o
+i386-elf-objdump -S kernel.o > kernel.asm
+i386-elf-nm -n kernel.o > kernel.sym
+i386-elf-objcopy -R .note -R .comment -S kernel.o kernel.bin
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7msed -n '195,235p' ../devices/timer.c[27msed -n '195,235p' ../devices/timer.c
+[?2004ltimer_interrupt (struct intr_frame *args UNUSED)
+{
+  struct list_elem *e;
+  ticks++;
+  e = list_begin (&sleeping_threads);
+  while (e != list_end (&sleeping_threads))
+    {
+      struct thread *t = list_entry (e, struct thread, elem);
+      if (t->wakeup_tick <= ticks)
+        {
+          e = list_remove (e);
+          thread_unblock (t);
+        }
+      else
+        {
+          e = list_next (e);
+        }
+    }
+
+  thread_tick ();
+}
+
+/* Returns true if LOOPS iterations waits for more than one timer
+   tick, otherwise false. */
+static bool
+too_many_loops (unsigned loops) 
+{
+  /* Wait for a timer tick. */
+  int64_t start = ticks;
+  while (ticks == start)
+    barrier ();
+
+  /* Run LOOPS loops. */
+  start = ticks;
+  busy_wait (loops);
+
+  /* If the tick count changed, we iterated too long. */
+  barrier ();
+  return start != ticks;
+}
+
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ make
+[?2004lcd build && make all
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+i386-elf-gcc -c ../../devices/timer.c -o devices/timer.o -m32 -g -msoft-float -O0 -fno-stack-protector -nostdinc -I../.. -I../../lib -I../../lib/kernel -Wall -W -Wstrict-prototypes -Wmissing-prototypes -Wsystem-headers  -MMD -MF devices/timer.d
+i386-elf-ld -melf_i386 -T threads/kernel.lds.s -o kernel.o threads/start.o threads/init.o threads/thread.o threads/switch.o threads/interrupt.o threads/intr-stubs.o threads/synch.o threads/palloc.o threads/malloc.o devices/pit.o devices/timer.o devices/kbd.o devices/vga.o devices/serial.o devices/block.o devices/partition.o devices/ide.o devices/input.o devices/intq.o devices/rtc.o devices/shutdown.o devices/speaker.o lib/debug.o lib/random.o lib/stdio.o lib/stdlib.o lib/string.o lib/arithmetic.o lib/ustar.o lib/kernel/debug.o lib/kernel/list.o lib/kernel/bitmap.o lib/kernel/hash.o lib/kernel/console.o tests/threads/tests.o tests/threads/alarm-wait.o tests/threads/alarm-simultaneous.o tests/threads/alarm-priority.o tests/threads/alarm-zero.o tests/threads/alarm-negative.o tests/threads/priority-change.o tests/threads/priority-donate-one.o tests/threads/priority-donate-multiple.o tests/threads/priority-donate-multiple2.o tests/threads/priority-donate-nest.o tests/threads/priority-donate-sema.o tests/threads/priority-donate-lower.o tests/threads/priority-fifo.o tests/threads/priority-preempt.o tests/threads/priority-sema.o tests/threads/priority-condvar.o tests/threads/priority-donate-chain.o tests/threads/mlfqs-load-1.o tests/threads/mlfqs-load-60.o tests/threads/mlfqs-load-avg.o tests/threads/mlfqs-recent-1.o tests/threads/mlfqs-fair.o tests/threads/mlfqs-block.o
+i386-elf-objdump -S kernel.o > kernel.asm
+i386-elf-nm -n kernel.o > kernel.sym
+i386-elf-objcopy -R .note -R .comment -S kernel.o kernel.bin
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mmake check TESTS=tests/threads/alarm-priority[27mmake check TESTS=tests/threads/alarm-priority
+[?2004lcd build && make check
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+pintos -v -k -T 60 --qemu  -- -q  run alarm-priority < /dev/null 2> tests/threads/alarm-priority.errors > tests/threads/alarm-priority.output
+perl -I../.. ../../tests/threads/alarm-priority.ck tests/threads/alarm-priority tests/threads/alarm-priority.result
+[32mpass tests/threads/alarm-priority
+[0mpass tests/threads/alarm-priority
+All 1 tests passed.
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mmake check TESTS="tests/threads/alarm-single tests/threads/alarm-multiple tests/threads/alarm-simultaneous tests/th[27m[7mr[27m[7meads/alarm-priority tests/threads/alarm-zero tests/threads/alarm-negative"[27m[Amake check TESTS="tests/threads/alarm-single tests/threads/alarm-multiple tests/threads/alarm-simultaneous tests/threads/alarm-priority tests/threads/alarm-zero tests/threads/alarm-negative"
+[?2004lcd build && make check
+make[1]: Entering directory '/home/luisa/InfrSW/pintos/src/threads/build'
+pintos -v -k -T 60 --qemu  -- -q  run alarm-single < /dev/null 2> tests/threads/alarm-single.errors > tests/threads/alarm-single.output
+perl -I../.. ../../tests/threads/alarm-single.ck tests/threads/alarm-single tests/threads/alarm-single.result
+[32mpass tests/threads/alarm-single
+[0mpintos -v -k -T 60 --qemu  -- -q  run alarm-multiple < /dev/null 2> tests/threads/alarm-multiple.errors > tests/threads/alarm-multiple.output
+perl -I../.. ../../tests/threads/alarm-multiple.ck tests/threads/alarm-multiple tests/threads/alarm-multiple.result
+[32mpass tests/threads/alarm-multiple
+[0mpintos -v -k -T 60 --qemu  -- -q  run alarm-simultaneous < /dev/null 2> tests/threads/alarm-simultaneous.errors > tests/threads/alarm-simultaneous.output
+perl -I../.. ../../tests/threads/alarm-simultaneous.ck tests/threads/alarm-simultaneous tests/threads/alarm-simultaneous.result
+[32mpass tests/threads/alarm-simultaneous
+[0mpintos -v -k -T 60 --qemu  -- -q  run alarm-zero < /dev/null 2> tests/threads/alarm-zero.errors > tests/threads/alarm-zero.output
+perl -I../.. ../../tests/threads/alarm-zero.ck tests/threads/alarm-zero tests/threads/alarm-zero.result
+[32mpass tests/threads/alarm-zero
+[0mpintos -v -k -T 60 --qemu  -- -q  run alarm-negative < /dev/null 2> tests/threads/alarm-negative.errors > tests/threads/alarm-negative.output
+perl -I../.. ../../tests/threads/alarm-negative.ck tests/threads/alarm-negative tests/threads/alarm-negative.result
+[32mpass tests/threads/alarm-negative
+[0mpass tests/threads/alarm-single
+pass tests/threads/alarm-multiple
+pass tests/threads/alarm-simultaneous
+pass tests/threads/alarm-priority
+pass tests/threads/alarm-zero
+pass tests/threads/alarm-negative
+All 6 tests passed.
+make[1]: Leaving directory '/home/luisa/InfrSW/pintos/src/threads/build'
+[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mcp ~/InfrSW/pintos/src/devices/timer.c "/mnt/c/Users/luisa/OneDrive/Área de Trabalho/alarmclock/alarm-clock/lfm3/de[27m[7mv[27m[7mices/timer.c"[27m[A]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ cp ~/InfrSW/pintos/src/devices/timer.c "/mnt/c/Users/luisa/OneDrive/Área de Trabalho/alarmclock/alarm-clock/lfm3/devices/timer.c"
+[?2004l[?2004h]0;luisa@LAPTOP-Q39GM9AS: ~/InfrSW/pintos/src/threads[01;32mluisa@LAPTOP-Q39GM9AS[00m:[01;34m~/InfrSW/pintos/src/threads[00m$ [7mexit[27mexit
+[?2004lexit
+
+Script done on 2026-09-19 19:59:25-03:00 [COMMAND_EXIT_CODE="0"]
